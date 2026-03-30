@@ -4,90 +4,113 @@ import { useState, useEffect, useRef } from "react";
 import { Scanner } from "@yudiel/react-qr-scanner";
 import type { IDetectedBarcode } from "@yudiel/react-qr-scanner";
 
+// Importamos el motor XTerm y sus estilos oficiales
+import { Terminal } from "xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "xterm/css/xterm.css";
+
 export default function Home() {
   const [daemonUrl, setDaemonUrl] = useState<string | null>(null);
-
-  // Estados de la Terminal
-  const [comando, setComando] = useState("");
-  const [historial, setHistorial] = useState<string[]>([
-    "Esperando conexión con el Lab...",
-  ]);
-
-  // NUEVO: Guardamos la referencia del WebSocket para poder enviar mensajes fuera del useEffect
   const [socket, setSocket] = useState<WebSocket | null>(null);
 
-  // NUEVO: Referencia para hacer scroll automático hacia abajo
-  const finalHistorialRef = useRef<HTMLDivElement>(null);
+  // Referencia al <div> vacío donde XTerm va a inyectar la pantalla negra
+  const terminalRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll cada vez que el historial cambia
-  useEffect(() => {
-    finalHistorialRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [historial]);
-
-  // NUEVO: Efecto para conectarse al WebSocket cuando tenemos la URL
-  useEffect(() => {
-    if (!daemonUrl) return;
-
-    // Abrimos el túnel bidireccional
-    const ws = new WebSocket(daemonUrl);
-
-    ws.onopen = () => {
-      setSocket(ws);
-      setHistorial((prev) => [...prev, "Túnel WebSocket establecido."]);
-    };
-
-    ws.onmessage = (event) => {
-      // Cada vez que Rust nos manda algo, lo agregamos a la pantalla
-      setHistorial((prev) => [...prev, event.data]);
-    };
-
-    ws.onerror = (error) => {
-      console.error("WebSocket Error:", error);
-      setHistorial((prev) => [
-        ...prev,
-        "[ERROR]: Fallo en la conexión WebSocket.",
-      ]);
-    };
-
-    ws.onclose = () => {
-      setHistorial((prev) => [...prev, "[SISTEMA]: Conexión cerrada."]);
-      setSocket(null);
-    };
-
-    // Limpieza: si el usuario se desconecta o cierra la app, cerramos el socket
-    return () => {
-      ws.close();
-    };
-  }, [daemonUrl]);
+  // Referencias para guardar el motor y el plugin sin que React los re-renderice
+  const xtermRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
 
   const handleScan = (detectedCodes: IDetectedBarcode[]) => {
     if (detectedCodes.length > 0) {
-      const detectedText = detectedCodes[0].rawValue;
-      setDaemonUrl(detectedText);
+      setDaemonUrl(detectedCodes[0].rawValue);
     }
   };
 
-  // ACTUALIZADO: Enviar el comando a través del WebSocket en lugar de Fetch
-  const enviarComando = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!comando.trim() || !socket || socket.readyState !== WebSocket.OPEN)
-      return;
+  // EFECTO PRINCIPAL: Iniciar WebSocket y XTerm juntos
+  useEffect(() => {
+    if (!daemonUrl || !terminalRef.current) return;
 
-    const comandoAEjecutar = comando;
-    setComando(""); // Limpiamos el input
+    // 1. Instanciamos la terminal de XTerm
+    const term = new Terminal({
+      cursorBlink: true,
+      theme: {
+        background: "#050414", // Tu fondo oscuro hacker
+        foreground: "#69f0ae", // Tu texto verde
+        cursor: "#69f0ae",
+      },
+      fontFamily: "Courier, monospace",
+      fontSize: 14,
+    });
 
-    // Mostramos lo que el usuario escribió
-    setHistorial((prev) => [...prev, `\n> ${comandoAEjecutar}`]);
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
 
-    // Lo disparamos por el túnel hacia la PC
-    socket.send(comandoAEjecutar);
-  };
+    // Guardamos las referencias
+    xtermRef.current = term;
+    fitAddonRef.current = fitAddon;
+
+    // "Enchufamos" la terminal al div de la pantalla
+    term.open(terminalRef.current);
+    fitAddon.fit();
+
+    term.writeln("Conectando con el túnel del Daemon...");
+
+    // 2. Abrimos el túnel WebSocket
+    const ws = new WebSocket(daemonUrl);
+    setSocket(ws);
+
+    ws.onopen = () => {
+      term.writeln("Conexión establecida. Iniciando monitor remoto...\r\n");
+    };
+
+    // 3. LA MAGIA BIDIRECCIONAL
+
+    // A) Cuando la PC manda texto o colores, lo escribimos en la pantalla de XTerm
+    ws.onmessage = (event) => {
+      term.write(event.data);
+    };
+
+    // B) Cuando el usuario teclea algo en la pantalla negra de XTerm, lo mandamos a la PC
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(data);
+      }
+    });
+
+    ws.onerror = () => {
+      term.writeln(
+        "\r\n\x1b[31m[ERROR]: Fallo en la conexión WebSocket.\x1b[0m",
+      );
+    };
+
+    ws.onclose = () => {
+      term.writeln(
+        "\r\n\x1b[31m[SISTEMA]: Conexión cerrada por el servidor.\x1b[0m",
+      );
+      setSocket(null);
+    };
+
+    // 4. Hacer que la terminal se redimensione si volteas el celular
+    const handleResize = () => {
+      fitAddon.fit();
+      // Opcional: Mandar un mensaje a Rust de que la pantalla cambió de tamaño
+    };
+    window.addEventListener("resize", handleResize);
+
+    // Limpieza al desconectar
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      ws.close();
+      term.dispose();
+      setSocket(null);
+    };
+  }, [daemonUrl]);
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-[#0F0C29] p-2 sm:p-8">
       <div
         className={`w-full ${
-          daemonUrl ? "max-w-5xl h-[90vh] sm:h-auto" : "max-w-md h-auto"
+          daemonUrl ? "max-w-5xl h-[90vh]" : "max-w-md h-auto"
         } p-4 sm:p-6 bg-white/5 backdrop-blur-md rounded-3xl border border-green-400/20 shadow-2xl transition-all duration-500 flex flex-col`}
       >
         <div className="flex justify-between items-center mb-4 sm:mb-6 shrink-0">
@@ -100,9 +123,8 @@ export default function Home() {
               onClick={() => {
                 socket?.close();
                 setDaemonUrl(null);
-                setHistorial(["Esperando conexión con el Lab..."]);
               }}
-              className="text-xs sm:text-sm text-red-400 hover:text-red-300 transition px-2 py-1"
+              className="text-xs sm:text-sm text-red-400 hover:text-red-300 transition px-2 py-1 border border-red-500/30 rounded"
             >
               [Desconectar]
             </button>
@@ -126,45 +148,15 @@ export default function Home() {
             </p>
           </div>
         ) : (
-          // --- PANTALLA 2: LA TERMINAL (Responsive) ---
-          <div className="flex flex-col flex-1 overflow-hidden min-h-[50vh]">
-            {/* El historial de la consola */}
-            <div className="flex-1 bg-[#050414] border border-gray-800 rounded-xl p-3 sm:p-4 overflow-y-auto font-mono text-xs sm:text-sm text-green-400 mb-4 shadow-inner break-words whitespace-pre-wrap">
-              {historial.map((linea, index) => (
-                <div key={index} className="mb-1 leading-relaxed">
-                  {linea}
-                </div>
-              ))}
-              {/* Este div invisible es el ancla para el auto-scroll */}
-              <div ref={finalHistorialRef} />
-            </div>
-
-            {/* El Input de comandos */}
-            <form onSubmit={enviarComando} className="flex gap-2 shrink-0">
-              <span className="text-green-500 font-mono text-base sm:text-lg pt-2 sm:pt-1">
-                &gt;
-              </span>
-              <input
-                type="text"
-                value={comando}
-                onChange={(e) => setComando(e.target.value)}
-                placeholder="Ingresa un comando..."
-                disabled={!socket || socket.readyState !== WebSocket.OPEN}
-                className="flex-1 bg-transparent border-b border-gray-600 focus:border-green-400 outline-none text-white font-mono text-sm sm:text-base px-2 py-2 transition-colors disabled:opacity-50"
-                autoFocus
-              />
-              <button
-                type="submit"
-                disabled={
-                  !socket ||
-                  socket.readyState !== WebSocket.OPEN ||
-                  !comando.trim()
-                }
-                className="px-4 sm:px-6 py-2 bg-green-500/20 text-green-400 border border-green-500/50 rounded-lg hover:bg-green-500/30 transition disabled:opacity-50 disabled:cursor-not-allowed font-mono text-xs sm:text-sm"
-              >
-                Send
-              </button>
-            </form>
+          // --- PANTALLA 2: LA TERMINAL (XTerm.js) ---
+          <div className="flex flex-col flex-1 overflow-hidden">
+            {/* Eliminamos el <form> y el <input>. 
+              Ahora XTerm toma control total de este div. 
+            */}
+            <div
+              ref={terminalRef}
+              className="flex-1 w-full h-full rounded-xl overflow-hidden shadow-inner border border-gray-800"
+            />
           </div>
         )}
       </div>
