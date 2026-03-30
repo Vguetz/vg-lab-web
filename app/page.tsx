@@ -1,65 +1,64 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from "react";
+import { Scanner } from "@yudiel/react-qr-scanner";
+import type { IDetectedBarcode } from "@yudiel/react-qr-scanner";
 
 export default function Home() {
+  const [daemonUrl, setDaemonUrl] = useState<string | null>(null);
+
+  // Ahora recibimos un array de objetos, tal como dicta la interfaz
+  const handleScan = (detectedCodes: IDetectedBarcode[]) => {
+    // Validamos que haya detectado al menos uno
+    if (detectedCodes.length > 0) {
+      const detectedText = detectedCodes[0].rawValue;
+      console.log("Scanned URL:", detectedText);
+      setDaemonUrl(detectedText);
+    }
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <main className="flex min-h-screen flex-col items-center justify-center bg-[#0F0C29] p-4">
+      <div className="w-full max-w-md p-6 bg-white/5 backdrop-blur-md rounded-3xl border border-green-400/20 shadow-2xl">
+        <h1 className="text-2xl font-semibold mb-6 text-center font-mono text-white">
+          &gt; Link_Lab
+        </h1>
+
+        {!daemonUrl ? (
+          <div className="flex flex-col items-center">
+            <div className="w-full aspect-square rounded-2xl overflow-hidden border-2 border-green-400/30 relative">
+              {/* COMPONENTE ACTUALIZADO */}
+              <Scanner
+                onScan={handleScan}
+                onError={(error) => console.error("Camera Error:", error)}
+                scanDelay={300} // Propiedad directa
+                formats={["qr_code"]} // Filtramos para no gastar batería
+              />
+
+              <div className="absolute inset-0 border-40 border-black/40 pointer-events-none"></div>
+            </div>
+            <p className="text-gray-400 mt-6 font-mono text-sm animate-pulse">
+              Esperando código QR...
+            </p>
+          </div>
+        ) : (
+          <div className="text-center flex flex-col items-center">
+            <div className="w-16 h-16 bg-green-400/20 rounded-full flex items-center justify-center mb-4">
+              <span className="text-3xl">✅</span>
+            </div>
+            <p className="text-green-400 font-mono mb-2">¡Conectado!</p>
+            <p className="text-xs text-gray-500 break-all bg-black/40 p-3 rounded-lg font-mono w-full">
+              {daemonUrl}
+            </p>
+            <button
+              onClick={() => setDaemonUrl(null)}
+              className="mt-8 px-6 py-2 bg-transparent border border-gray-600 text-gray-300 rounded-full hover:bg-white/10 transition-colors font-mono text-sm"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+              Resetear
+            </button>
+          </div>
+        )}
+      </div>
+    </main>
   );
 }
