@@ -11,12 +11,14 @@ import "xterm/css/xterm.css";
 
 export default function Home() {
   const [daemonUrl, setDaemonUrl] = useState<string | null>(null);
-  const [socket, setSocket] = useState<WebSocket | null>(null);
+
+  // SOLUCIÓN: Usamos useRef en lugar de useState para guardar el socket
+  const socketRef = useRef<WebSocket | null>(null);
 
   // Referencia al <div> vacío donde XTerm va a inyectar la pantalla negra
   const terminalRef = useRef<HTMLDivElement>(null);
 
-  // Referencias para guardar el motor y el plugin sin que React los re-renderice
+  // Referencias para guardar el motor y el plugin
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
 
@@ -34,8 +36,8 @@ export default function Home() {
     const term = new Terminal({
       cursorBlink: true,
       theme: {
-        background: "#050414", // Tu fondo oscuro hacker
-        foreground: "#69f0ae", // Tu texto verde
+        background: "#050414",
+        foreground: "#69f0ae",
         cursor: "#69f0ae",
       },
       fontFamily: "Courier, monospace",
@@ -57,7 +59,7 @@ export default function Home() {
 
     // 2. Abrimos el túnel WebSocket
     const ws = new WebSocket(daemonUrl);
-    setSocket(ws);
+    socketRef.current = ws; // Guardamos en la referencia en vez del estado
 
     ws.onopen = () => {
       term.writeln("Conexión establecida. Iniciando monitor remoto...\r\n");
@@ -87,13 +89,12 @@ export default function Home() {
       term.writeln(
         "\r\n\x1b[31m[SISTEMA]: Conexión cerrada por el servidor.\x1b[0m",
       );
-      setSocket(null);
+      socketRef.current = null;
     };
 
     // 4. Hacer que la terminal se redimensione si volteas el celular
     const handleResize = () => {
       fitAddon.fit();
-      // Opcional: Mandar un mensaje a Rust de que la pantalla cambió de tamaño
     };
     window.addEventListener("resize", handleResize);
 
@@ -102,7 +103,7 @@ export default function Home() {
       window.removeEventListener("resize", handleResize);
       ws.close();
       term.dispose();
-      setSocket(null);
+      socketRef.current = null;
     };
   }, [daemonUrl]);
 
@@ -121,7 +122,7 @@ export default function Home() {
           {daemonUrl && (
             <button
               onClick={() => {
-                socket?.close();
+                socketRef.current?.close();
                 setDaemonUrl(null);
               }}
               className="text-xs sm:text-sm text-red-400 hover:text-red-300 transition px-2 py-1 border border-red-500/30 rounded"
@@ -150,9 +151,6 @@ export default function Home() {
         ) : (
           // --- PANTALLA 2: LA TERMINAL (XTerm.js) ---
           <div className="flex flex-col flex-1 overflow-hidden">
-            {/* Eliminamos el <form> y el <input>. 
-              Ahora XTerm toma control total de este div. 
-            */}
             <div
               ref={terminalRef}
               className="flex-1 w-full h-full rounded-xl overflow-hidden shadow-inner border border-gray-800"
