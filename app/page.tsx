@@ -1,30 +1,41 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Scanner } from "@yudiel/react-qr-scanner";
 import type { IDetectedBarcode } from "@yudiel/react-qr-scanner";
 import dynamic from "next/dynamic";
 
-// MAGIA: Cargamos la terminal SOLO en el cliente, ignorando el servidor de Next.js
 const TerminalRemota = dynamic(() => import("./TerminalComponent"), {
   ssr: false,
-  loading: () => (
-    <div className="text-green-400 font-mono p-4 animate-pulse">
-      Cargando motor de terminal...
-    </div>
-  ),
+  loading: () => {
+    console.log("[Page.tsx] Cargando el chunk dinámico de la terminal...");
+    return (
+      <div className="text-green-400 font-mono p-4 animate-pulse">
+        Cargando motor de terminal...
+      </div>
+    );
+  },
 });
 
 export default function Home() {
   const [daemonUrl, setDaemonUrl] = useState<string | null>(null);
 
+  useEffect(() => {
+    console.log("[Page.tsx] Estado de daemonUrl cambió a:", daemonUrl);
+  }, [daemonUrl]);
+
   const handleScan = (detectedCodes: IDetectedBarcode[]) => {
     if (detectedCodes.length > 0) {
-      setDaemonUrl(detectedCodes[0].rawValue);
+      const urlEscaneada = detectedCodes[0].rawValue;
+      console.log("[Page.tsx] ¡QR Escaneado! Texto crudo:", urlEscaneada);
+      setDaemonUrl(urlEscaneada);
     }
   };
 
   const desconectar = () => {
+    console.log(
+      "[Page.tsx] Función desconectar invocada. Reseteando daemonUrl.",
+    );
     setDaemonUrl(null);
   };
 
@@ -55,7 +66,9 @@ export default function Home() {
             <div className="w-full aspect-square max-w-[300px] rounded-2xl overflow-hidden border-2 border-green-400/30 relative">
               <Scanner
                 onScan={handleScan}
-                onError={(error) => console.error("Camera Error:", error)}
+                onError={(error) =>
+                  console.error("[Page.tsx] Camera Error:", error)
+                }
                 scanDelay={300}
                 formats={["qr_code"]}
               />
@@ -67,7 +80,6 @@ export default function Home() {
           </div>
         ) : (
           <div className="flex flex-col flex-1 overflow-hidden">
-            {/* Inyectamos nuestro componente dinámico */}
             <TerminalRemota daemonUrl={daemonUrl} onDisconnect={desconectar} />
           </div>
         )}
