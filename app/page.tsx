@@ -1,21 +1,22 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { Scanner } from "@yudiel/react-qr-scanner";
 import type { IDetectedBarcode } from "@yudiel/react-qr-scanner";
+import dynamic from "next/dynamic";
 
-// Mantenemos el CSS aquí porque el CSS no busca variables del navegador y no rompe la compilación
-import "xterm/css/xterm.css";
+// MAGIA: Cargamos la terminal SOLO en el cliente, ignorando el servidor de Next.js
+const TerminalRemota = dynamic(() => import("./TerminalComponent"), {
+  ssr: false,
+  loading: () => (
+    <div className="text-green-400 font-mono p-4 animate-pulse">
+      Cargando motor de terminal...
+    </div>
+  ),
+});
 
 export default function Home() {
   const [daemonUrl, setDaemonUrl] = useState<string | null>(null);
-
-  const socketRef = useRef<WebSocket | null>(null);
-  const terminalRef = useRef<HTMLDivElement>(null);
-
-  // Guardamos la referencia del motor como 'any' para evitar que TypeScript
-  // exija el import estático que nos rompe la compilación
-  const xtermRef = useRef<any>(null);
 
   const handleScan = (detectedCodes: IDetectedBarcode[]) => {
     if (detectedCodes.length > 0) {
@@ -23,98 +24,9 @@ export default function Home() {
     }
   };
 
-  useEffect(() => {
-    if (!daemonUrl || !terminalRef.current) return;
-
-    let isMounted = true; // Control de seguridad por si el usuario cierra rápido
-    let handleResize: () => void;
-
-    // --- LA SOLUCIÓN: Función asíncrona para cargar XTerm en caliente ---
-    const arrancarTerminal = async () => {
-      // Importamos las clases dinámicamente solo cuando estamos seguros de estar en el navegador
-      const { Terminal } = await import("xterm");
-      const { FitAddon } = await import("@xterm/addon-fit");
-
-      if (!isMounted) return;
-
-      const term = new Terminal({
-        cursorBlink: true,
-        theme: {
-          background: "#050414",
-          foreground: "#69f0ae",
-          cursor: "#69f0ae",
-        },
-        fontFamily: "Courier, monospace",
-        fontSize: 14,
-      });
-
-      const fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-
-      xtermRef.current = term;
-
-      // Enchufamos la terminal al div
-      term.open(terminalRef.current!);
-      fitAddon.fit();
-
-      term.writeln("Conectando con el túnel del Daemon...");
-
-      // Abrimos el túnel WebSocket
-      const ws = new WebSocket(daemonUrl);
-      socketRef.current = ws;
-
-      ws.onopen = () => {
-        term.writeln("Conexión establecida. Iniciando monitor remoto...\r\n");
-      };
-
-      ws.onmessage = (event) => {
-        term.write(event.data);
-      };
-
-      term.onData((data) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(data);
-        }
-      });
-
-      ws.onerror = () => {
-        term.writeln(
-          "\r\n\x1b[31m[ERROR]: Fallo en la conexión WebSocket.\x1b[0m",
-        );
-      };
-
-      ws.onclose = () => {
-        term.writeln(
-          "\r\n\x1b[31m[SISTEMA]: Conexión cerrada por el servidor.\x1b[0m",
-        );
-        socketRef.current = null;
-      };
-
-      // Manejo de redimensión para el Addon
-      handleResize = () => {
-        fitAddon.fit();
-      };
-      window.addEventListener("resize", handleResize);
-    };
-
-    arrancarTerminal();
-
-    // Limpieza profunda al desconectar
-    return () => {
-      isMounted = false;
-      if (handleResize) window.removeEventListener("resize", handleResize);
-
-      if (socketRef.current) {
-        socketRef.current.close();
-        socketRef.current = null;
-      }
-
-      if (xtermRef.current) {
-        xtermRef.current.dispose();
-        xtermRef.current = null;
-      }
-    };
-  }, [daemonUrl]);
+  const desconectar = () => {
+    setDaemonUrl(null);
+  };
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-[#0F0C29] p-2 sm:p-8">
@@ -130,10 +42,7 @@ export default function Home() {
 
           {daemonUrl && (
             <button
-              onClick={() => {
-                socketRef.current?.close();
-                setDaemonUrl(null);
-              }}
+              onClick={desconectar}
               className="text-xs sm:text-sm text-red-400 hover:text-red-300 transition px-2 py-1 border border-red-500/30 rounded"
             >
               [Desconectar]
@@ -158,10 +67,8 @@ export default function Home() {
           </div>
         ) : (
           <div className="flex flex-col flex-1 overflow-hidden">
-            <div
-              ref={terminalRef}
-              className="flex-1 w-full h-full rounded-xl overflow-hidden shadow-inner border border-gray-800"
-            />
+            {/* Inyectamos nuestro componente dinámico */}
+            <TerminalRemota daemonUrl={daemonUrl} onDisconnect={desconectar} />
           </div>
         )}
       </div>
