@@ -4,23 +4,18 @@ import { useState, useEffect, useRef } from "react";
 import { Scanner } from "@yudiel/react-qr-scanner";
 import type { IDetectedBarcode } from "@yudiel/react-qr-scanner";
 
-// Importamos el motor XTerm y sus estilos oficiales
-import { Terminal } from "xterm";
-import { FitAddon } from "@xterm/addon-fit";
+// Mantenemos el CSS aquí porque el CSS no busca variables del navegador y no rompe la compilación
 import "xterm/css/xterm.css";
 
 export default function Home() {
   const [daemonUrl, setDaemonUrl] = useState<string | null>(null);
 
-  // SOLUCIÓN: Usamos useRef en lugar de useState para guardar el socket
   const socketRef = useRef<WebSocket | null>(null);
-
-  // Referencia al <div> vacío donde XTerm va a inyectar la pantalla negra
   const terminalRef = useRef<HTMLDivElement>(null);
 
-  // Referencias para guardar el motor y el plugin
-  const xtermRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
+  // Guardamos la referencia del motor como 'any' para evitar que TypeScript
+  // exija el import estático que nos rompe la compilación
+  const xtermRef = useRef<any>(null);
 
   const handleScan = (detectedCodes: IDetectedBarcode[]) => {
     if (detectedCodes.length > 0) {
@@ -28,82 +23,96 @@ export default function Home() {
     }
   };
 
-  // EFECTO PRINCIPAL: Iniciar WebSocket y XTerm juntos
   useEffect(() => {
     if (!daemonUrl || !terminalRef.current) return;
 
-    // 1. Instanciamos la terminal de XTerm
-    const term = new Terminal({
-      cursorBlink: true,
-      theme: {
-        background: "#050414",
-        foreground: "#69f0ae",
-        cursor: "#69f0ae",
-      },
-      fontFamily: "Courier, monospace",
-      fontSize: 14,
-    });
+    let isMounted = true; // Control de seguridad por si el usuario cierra rápido
+    let handleResize: () => void;
 
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
+    // --- LA SOLUCIÓN: Función asíncrona para cargar XTerm en caliente ---
+    const arrancarTerminal = async () => {
+      // Importamos las clases dinámicamente solo cuando estamos seguros de estar en el navegador
+      const { Terminal } = await import("xterm");
+      const { FitAddon } = await import("@xterm/addon-fit");
 
-    // Guardamos las referencias
-    xtermRef.current = term;
-    fitAddonRef.current = fitAddon;
+      if (!isMounted) return;
 
-    // "Enchufamos" la terminal al div de la pantalla
-    term.open(terminalRef.current);
-    fitAddon.fit();
+      const term = new Terminal({
+        cursorBlink: true,
+        theme: {
+          background: "#050414",
+          foreground: "#69f0ae",
+          cursor: "#69f0ae",
+        },
+        fontFamily: "Courier, monospace",
+        fontSize: 14,
+      });
 
-    term.writeln("Conectando con el túnel del Daemon...");
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
 
-    // 2. Abrimos el túnel WebSocket
-    const ws = new WebSocket(daemonUrl);
-    socketRef.current = ws; // Guardamos en la referencia en vez del estado
+      xtermRef.current = term;
 
-    ws.onopen = () => {
-      term.writeln("Conexión establecida. Iniciando monitor remoto...\r\n");
-    };
-
-    // 3. LA MAGIA BIDIRECCIONAL
-
-    // A) Cuando la PC manda texto o colores, lo escribimos en la pantalla de XTerm
-    ws.onmessage = (event) => {
-      term.write(event.data);
-    };
-
-    // B) Cuando el usuario teclea algo en la pantalla negra de XTerm, lo mandamos a la PC
-    term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(data);
-      }
-    });
-
-    ws.onerror = () => {
-      term.writeln(
-        "\r\n\x1b[31m[ERROR]: Fallo en la conexión WebSocket.\x1b[0m",
-      );
-    };
-
-    ws.onclose = () => {
-      term.writeln(
-        "\r\n\x1b[31m[SISTEMA]: Conexión cerrada por el servidor.\x1b[0m",
-      );
-      socketRef.current = null;
-    };
-
-    // 4. Hacer que la terminal se redimensione si volteas el celular
-    const handleResize = () => {
+      // Enchufamos la terminal al div
+      term.open(terminalRef.current!);
       fitAddon.fit();
-    };
-    window.addEventListener("resize", handleResize);
 
-    // Limpieza al desconectar
+      term.writeln("Conectando con el túnel del Daemon...");
+
+      // Abrimos el túnel WebSocket
+      const ws = new WebSocket(daemonUrl);
+      socketRef.current = ws;
+
+      ws.onopen = () => {
+        term.writeln("Conexión establecida. Iniciando monitor remoto...\r\n");
+      };
+
+      ws.onmessage = (event) => {
+        term.write(event.data);
+      };
+
+      term.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(data);
+        }
+      });
+
+      ws.onerror = () => {
+        term.writeln(
+          "\r\n\x1b[31m[ERROR]: Fallo en la conexión WebSocket.\x1b[0m",
+        );
+      };
+
+      ws.onclose = () => {
+        term.writeln(
+          "\r\n\x1b[31m[SISTEMA]: Conexión cerrada por el servidor.\x1b[0m",
+        );
+        socketRef.current = null;
+      };
+
+      // Manejo de redimensión para el Addon
+      handleResize = () => {
+        fitAddon.fit();
+      };
+      window.addEventListener("resize", handleResize);
+    };
+
+    arrancarTerminal();
+
+    // Limpieza profunda al desconectar
     return () => {
-      window.removeEventListener("resize", handleResize);
-      ws.close();
-      term.dispose();
-      socketRef.current = null;
+      isMounted = false;
+      if (handleResize) window.removeEventListener("resize", handleResize);
+
+      if (socketRef.current) {
+        socketRef.current.close();
+        socketRef.current = null;
+      }
+
+      if (xtermRef.current) {
+        xtermRef.current.dispose();
+        xtermRef.current = null;
+      }
     };
   }, [daemonUrl]);
 
@@ -133,7 +142,6 @@ export default function Home() {
         </div>
 
         {!daemonUrl ? (
-          // --- PANTALLA 1: ESCÁNER ---
           <div className="flex flex-col items-center justify-center flex-1">
             <div className="w-full aspect-square max-w-[300px] rounded-2xl overflow-hidden border-2 border-green-400/30 relative">
               <Scanner
@@ -149,7 +157,6 @@ export default function Home() {
             </p>
           </div>
         ) : (
-          // --- PANTALLA 2: LA TERMINAL (XTerm.js) ---
           <div className="flex flex-col flex-1 overflow-hidden">
             <div
               ref={terminalRef}
